@@ -27,7 +27,7 @@ function createWindow() {
   // atlas://media/some/file.mp4 -> serves the local file relative to project root
   // Range headers forwarded so video seeking and looping work correctly
   protocol.handle('atlas', (request) => {
-    const relativePath = request.url.slice('atlas://'.length)
+    const relativePath = decodeURIComponent(request.url.slice('atlas://'.length))
     const absolutePath = join(process.cwd(), relativePath)
     return net.fetch(pathToFileURL(absolutePath).toString(), {
       headers: request.headers
