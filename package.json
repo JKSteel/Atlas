@@ -1,0 +1,24 @@
+{
+  "name": "atlas",
+  "version": "0.1.0",
+  "description": "Personal interactive travel media atlas",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "node scripts/dev.js",
+    "build": "cross-env ELECTRON_RUN_AS_NODE= electron-vite build",
+    "preview": "cross-env ELECTRON_RUN_AS_NODE= electron-vite preview"
+  },
+  "dependencies": {
+    "exiftool-vendored": "^35.21.0",
+    "react-globe.gl": "^2.27.4",
+    "supercluster": "^8.0.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "cross-env": "^10.1.0",
+    "electron": "^33.2.1",
+    "electron-vite": "^5.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}
