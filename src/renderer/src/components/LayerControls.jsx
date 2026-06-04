@@ -11,7 +11,7 @@ function toRoman(n) {
   return result
 }
 
-export default function LayerControls({ categories, activeLayers, onToggle, settings }) {
+export default function LayerControls({ categories, activeLayers, onToggle, settings, categoryColors }) {
   const t = THEMES[settings.theme]
   const allActive = categories.every(c => activeLayers.has(c))
   const noneActive = categories.every(c => !activeLayers.has(c))
@@ -35,6 +35,7 @@ export default function LayerControls({ categories, activeLayers, onToggle, sett
       {/* Category entries */}
       {categories.map((cat, i) => {
         const active = activeLayers.has(cat)
+        const color = categoryColors?.get(cat) ?? t.accent
         return (
           <div
             key={cat}
@@ -49,8 +50,8 @@ export default function LayerControls({ categories, activeLayers, onToggle, sett
             </span>
             <span style={{
               ...styles.indicator,
-              background: active ? t.accent : 'transparent',
-              borderColor: active ? t.accent : t.textDim
+              background: active ? color : 'transparent',
+              borderColor: active ? color : t.textDim
             }} />
           </div>
         )

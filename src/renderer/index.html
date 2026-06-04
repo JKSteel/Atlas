@@ -8,6 +8,16 @@
       * { margin: 0; padding: 0; box-sizing: border-box; }
       body { overflow: hidden; background: #0a0e1a; }
       #root { width: 100vw; height: 100vh; }
+
+      /* Media panel entrance: backdrop fades, content rises and scales in */
+      @keyframes atlas-overlay-in {
+        from { opacity: 0; }
+        to   { opacity: 1; }
+      }
+      @keyframes atlas-panel-in {
+        from { opacity: 0; transform: translateY(32px) scale(0.94); }
+        to   { opacity: 1; transform: translateY(0) scale(1); }
+      }
     </style>
   </head>
   <body>

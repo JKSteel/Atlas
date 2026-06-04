@@ -1,9 +1,10 @@
 import { useRef, useEffect, useCallback } from 'react'
 import { THEMES } from '../shared/themes'
 
-export default function MediaPanel({ pin, settings, onClose }) {
+export default function MediaPanel({ pin, settings, categoryColors, onClose }) {
   const videoRef = useRef()
   const t = THEMES[settings.theme]
+  const categoryColor = categoryColors?.get(pin?.category) ?? t.accent
   const isVideo = !!pin?.videoPath
   const photoSrc = !isVideo && pin?.photos?.length ? `atlas://${pin.photos[0]}` : null
 
@@ -58,7 +59,7 @@ export default function MediaPanel({ pin, settings, onClose }) {
 
         <div style={{ ...styles.footer, background: t.panelBg, borderTop: `1px solid ${t.panelBorder}` }}>
           <span style={{ ...styles.label, color: t.text }}>{pin?.label}</span>
-          <span style={{ ...styles.category, color: t.accent }}>{pin?.category}</span>
+          <span style={{ ...styles.category, color: categoryColor }}>{pin?.category}</span>
         </div>
 
         {isVideo && (
@@ -76,12 +77,14 @@ const styles = {
   overlay: {
     position: 'fixed', inset: 0,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    zIndex: 1000
+    zIndex: 1000,
+    animation: 'atlas-overlay-in 0.35s ease-out both'
   },
   panel: {
     position: 'relative',
     display: 'flex', flexDirection: 'column', alignItems: 'center',
-    maxWidth: '80vw', maxHeight: '82vh'
+    maxWidth: '80vw', maxHeight: '82vh',
+    animation: 'atlas-panel-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both'
   },
   mediaWrapper: {
     background: '#000',

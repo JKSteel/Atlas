@@ -7,6 +7,7 @@ export const DEFAULT_SETTINGS = {
   pinSize: 1.0,        // base pin width in screen pixels × 28 (0.3 – 2.5)
   minAltitude: 0.02,   // fraction of globe radius (0.01 – 0.5)
   clusterRadius: 40,   // cluster density 1–100
+  splitPins: false,    // fan apart co-located pins when zoomed in close
   dateFrom: null,      // ISO date string YYYY-MM-DD or null (no lower bound)
   dateTo: null         // ISO date string YYYY-MM-DD or null (no upper bound)
 }

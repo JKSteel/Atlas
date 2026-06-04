@@ -4,7 +4,7 @@ import MediaPanel from './components/MediaPanel'
 import LayerControls from './components/LayerControls'
 import SettingsPanel from './components/SettingsPanel'
 import { useSettings } from './hooks/useSettings'
-import { THEMES } from './shared/themes'
+import { THEMES, GRAIN_TEXTURE } from './shared/themes'
 
 export default function App() {
   const { settings, updateSetting, resetSettings } = useSettings()
@@ -47,6 +47,15 @@ export default function App() {
     [pins]
   )
 
+  // Stable category → colour map (assigned by sorted order) shared by the globe pins,
+  // the layer index, and the media panel so a category reads the same colour everywhere.
+  const categoryColors = useMemo(() => {
+    const palette = t.categoryPalette
+    const map = new Map()
+    categories.forEach((c, i) => map.set(c, palette[i % palette.length]))
+    return map
+  }, [categories, t])
+
   const toggleLayer = (category) => {
     setActiveLayers(prev => {
       const next = new Set(prev)
@@ -56,13 +65,23 @@ export default function App() {
   }
 
   return (
-    <div style={{ width: '100vw', height: '100vh', background: t.appBackground }}>
-      <Globe
-        pins={pins}
-        activeLayers={activeLayers}
-        onPinClick={setSelectedPin}
-        settings={settings}
-      />
+    <div style={{ width: '100vw', height: '100vh', position: 'relative', background: t.appBackground }}>
+      {/* Film-grain overlay — sits behind the globe so it only textures the empty canvas */}
+      <div style={{
+        position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none',
+        backgroundImage: GRAIN_TEXTURE, backgroundSize: '180px 180px',
+        opacity: t.grainOpacity, mixBlendMode: t.grainBlend
+      }} />
+
+      <div style={{ position: 'absolute', inset: 0, zIndex: 1 }}>
+        <Globe
+          pins={pins}
+          activeLayers={activeLayers}
+          onPinClick={setSelectedPin}
+          settings={settings}
+          categoryColors={categoryColors}
+        />
+      </div>
 
       {/* Settings button — top right */}
       <button
@@ -96,6 +115,7 @@ export default function App() {
         <MediaPanel
           pin={selectedPin}
           settings={settings}
+          categoryColors={categoryColors}
           onClose={() => setSelectedPin(null)}
         />
       )}
@@ -106,6 +126,7 @@ export default function App() {
           activeLayers={activeLayers}
           onToggle={toggleLayer}
           settings={settings}
+          categoryColors={categoryColors}
         />
       )}
     </div>

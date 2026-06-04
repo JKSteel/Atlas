@@ -2,6 +2,10 @@ import { useState } from 'react'
 import { THEMES } from '../shared/themes'
 import { DEFAULT_SETTINGS } from '../hooks/useSettings'
 
+// Globe altitude is stored as a fraction of the globe radius; the radius represents
+// Earth's mean radius, so multiplying by this gives the camera height above the surface.
+const EARTH_RADIUS_KM = 6371
+
 // ── Sub-components ──────────────────────────────────────────────────────────
 
 function Toggle({ value, onChange, t }) {
@@ -39,12 +43,13 @@ function Row({ label, children, t }) {
   )
 }
 
-function SliderSetting({ label, value, min, max, step, onChange, hint, t }) {
+function SliderSetting({ label, value, min, max, step, onChange, hint, unit, t }) {
   const handleSlider = (e) => onChange(parseFloat(e.target.value))
   const handleNumber = (e) => {
     const v = parseFloat(e.target.value)
     if (!isNaN(v) && v >= min && v <= max) onChange(v)
   }
+  const unitSuffix = unit ? ` ${unit}` : ''
 
   return (
     <div style={{ padding: '10px 0', borderBottom: `1px solid ${t.panelBorder}` }}>
@@ -67,10 +72,14 @@ function SliderSetting({ label, value, min, max, step, onChange, hint, t }) {
             color: t.text, textAlign: 'right', fontFamily: 'system-ui, sans-serif'
           }}
         />
+        {unit && (
+          <span style={{ fontSize: 11, color: t.textDim,
+                         fontFamily: 'system-ui, sans-serif' }}>{unit}</span>
+        )}
       </div>
       <p style={{ margin: '5px 0 0', fontSize: 10, color: t.textDim,
                   fontFamily: 'system-ui, sans-serif', lineHeight: 1.4 }}>
-        {hint} · Range: {min} – {max}
+        {hint} · Range: {min} – {max}{unitSuffix}
       </p>
     </div>
   )
@@ -170,6 +179,14 @@ export default function SettingsPanel({ settings, updateSetting, resetSettings, 
               />
             </Row>
 
+            <Row label="Split overlapping pins" t={t}>
+              <Toggle
+                value={settings.splitPins}
+                onChange={v => updateSetting('splitPins', v)}
+                t={t}
+              />
+            </Row>
+
             <SliderSetting
               label="Pin size"
               value={settings.pinSize}
@@ -179,14 +196,13 @@ export default function SettingsPanel({ settings, updateSetting, resetSettings, 
               t={t}
             />
 
-            {/* TODO: slider ranges and km translation need calibration — current
-                values are approximate and may not feel intuitive in practice */}
             <SliderSetting
               label="Min zoom altitude"
-              value={settings.minAltitude}
-              min={0.01} max={0.5} step={0.005}
-              onChange={v => updateSetting('minAltitude', v)}
-              hint={`How close the camera can zoom. Lower = closer. ≈ ${Math.round(settings.minAltitude * 6371)} km above the surface.`}
+              value={Math.round(settings.minAltitude * EARTH_RADIUS_KM)}
+              min={50} max={3000} step={10}
+              onChange={km => updateSetting('minAltitude', km / EARTH_RADIUS_KM)}
+              hint="Closest the camera can get to the surface. Lower = zoom in further."
+              unit="km"
               t={t}
             />
 

@@ -1,12 +1,24 @@
 import { useRef, useCallback, useState, useEffect, useMemo } from 'react'
 import GlobeGL from 'react-globe.gl'
 import Supercluster from 'supercluster'
-import { THEMES, GLOBE_TEXTURES } from '../shared/themes'
-// TODO: implement progressive low-res → high-res texture loading
-// import { GLOBE_TEXTURES_LORES } from '../shared/themes'
+import { THEMES, GLOBE_TEXTURES, GLOBE_TEXTURES_LORES } from '../shared/themes'
 
 const MAX_ALT = 3.0
 const MAX_ZOOM = 14
+
+const GLOBE_RADIUS = 100        // globe.gl's world-space globe radius
+const DEFAULT_ALT = 2.5         // globe.gl's default camera altitude on load
+const MAX_ZOOM_OUT_FACTOR = 1.5   // cap zoom-out at this multiple of the default distance
+
+// When the "split overlapping pins" setting is on, this is the "zoom in close enough to
+// split" threshold: below it, near-identical GPS points stay merged in a cluster badge;
+// past it, supercluster (capped at this maxZoom) yields individual points that
+// deOverlapIndividuals then fans apart. Tune to taste.
+const SPLIT_ZOOM = 10
+
+// Desired on-screen spacing between fanned pins, as a multiple of pin width. ~1.4
+// roughly matches the teardrop height so stacked pins don't cover each other's tips.
+const FAN_SPACING = 1.4
 
 function altToZoom(altitude, minAlt) {
   const logRange = Math.log(MAX_ALT / minAlt)
@@ -18,61 +30,178 @@ function zoomToAlt(zoom, minAlt) {
   return MAX_ALT * Math.exp(-zoom / MAX_ZOOM * Math.log(MAX_ALT / minAlt))
 }
 
-// Globe.gl sets pointer-events:none on its HTML layer so the globe stays interactive.
-// Each element needs pointer-events:auto to receive clicks independently.
+// Module-level cache of fetch+decode promises, keyed by URL. Survives theme switches so
+// switching back to a previously-loaded theme is instant with no re-fetch or re-decode.
+const bitmapCache = new Map()
 
-// SVG map-pin teardrop element — pinned at its bottom tip to the lat/lng point
-function buildPinEl(color, pxWidth, label, onClick, onWheel) {
-  const w = pxWidth
-  const h = Math.round(w * 1.45)
+function getCachedBitmap(url) {
+  if (!bitmapCache.has(url)) {
+    bitmapCache.set(url,
+      fetch(url)
+        .then(r => r.blob())
+        .then(blob => createImageBitmap(blob, { imageOrientation: 'from-image' }))
+    )
+  }
+  return bitmapCache.get(url)
+}
+
+// react-globe.gl doesn't expose the globe material, so reach it through the scene:
+// the earth sphere is the only object carrying a texture map.
+function findGlobeMaterial(globe) {
+  let material = null
+  globe.scene().traverse(o => { if (!material && o.material?.map) material = o.material })
+  return material
+}
+
+// Spread co-located individual points apart in screen space so each stays clickable.
+// Pins sharing (or nearly sharing) GPS coords project to the same pixel; we detect
+// these collisions on screen, then fan each colliding group into a ring sized so
+// neighbours sit ~sepPx apart. Screen offsets are converted back to lat/lng via the
+// local screen→geo Jacobian (finite-differenced from the live camera), which accounts
+// for latitude compression, camera tilt and rotation. Mutates points[].lat/lng.
+function deOverlapIndividuals(points, globe, sepPx) {
+  let screen
+  try {
+    screen = points.map(p => globe.getScreenCoords(p.lat, p.lng, 0))
+  } catch {
+    return  // globe not ready yet; positions left as-is, recomputed on next zoom tick
+  }
+
+  // Bucket onto a sepPx grid — points landing in the same cell collide on screen.
+  const buckets = new Map()
+  points.forEach((p, i) => {
+    const s = screen[i]
+    if (!Number.isFinite(s.x) || !Number.isFinite(s.y)) return
+    const key = `${Math.round(s.x / sepPx)},${Math.round(s.y / sepPx)}`
+    const b = buckets.get(key)
+    if (b) b.push(i)
+    else buckets.set(key, [i])
+  })
+
+  for (const idx of buckets.values()) {
+    if (idx.length < 2) continue
+    const n = idx.length
+    const lat0 = idx.reduce((s, i) => s + points[i].lat, 0) / n
+    const lng0 = idx.reduce((s, i) => s + points[i].lng, 0) / n
+
+    // Finite-difference the screen→geo mapping around the group centre.
+    const EPS = 0.005
+    const c = globe.getScreenCoords(lat0, lng0, 0)
+    const jLat = globe.getScreenCoords(lat0 + EPS, lng0, 0)
+    const jLng = globe.getScreenCoords(lat0, lng0 + EPS, 0)
+    const dxdLat = (jLat.x - c.x) / EPS, dydLat = (jLat.y - c.y) / EPS
+    const dxdLng = (jLng.x - c.x) / EPS, dydLng = (jLng.y - c.y) / EPS
+    const det = dxdLat * dydLng - dxdLng * dydLat
+    if (!det) continue  // degenerate (point near the horizon); leave it alone
+
+    const rPx = sepPx / (2 * Math.sin(Math.PI / n))  // ring radius giving sepPx chords
+    idx.forEach((pi, k) => {
+      const theta = (2 * Math.PI * k) / n - Math.PI / 2
+      const dx = rPx * Math.cos(theta), dy = rPx * Math.sin(theta)
+      // Solve J · [dLat, dLng]ᵀ = [dx, dy]ᵀ to hit the target pixel offset.
+      points[pi].lat = lat0 + (dydLng * dx - dxdLng * dy) / det
+      points[pi].lng = lng0 + (-dydLat * dx + dxdLat * dy) / det
+    })
+  }
+}
+
+// Globe.gl sets pointer-events:none on its HTML layer so the globe stays interactive;
+// every marker re-enables pointer-events so it can be clicked independently. Wheel
+// events are forwarded to the canvas (via onWheel) so scroll-zoom works over a marker.
+function buildMarkerEl({ html, transform, title, onClick, onWheel }) {
   const el = document.createElement('div')
-  el.title = label
+  el.title = title
   el.style.cssText = 'cursor:pointer; user-select:none; display:inline-block; pointer-events:auto;'
-  el.innerHTML = `
-    <svg width="${w}" height="${h}" viewBox="0 0 40 58"
-         style="display:block; filter:drop-shadow(0 2px 5px rgba(0,0,0,0.35));">
-      <path d="M20 0C9 0 0 9 0 20C0 35 20 58 20 58C20 58 40 35 40 20C40 9 31 0 20 0Z"
-            fill="${color}"/>
-      <circle cx="20" cy="20" r="8" fill="rgba(255,255,255,0.7)"/>
-    </svg>`
-  el.style.transform = 'translate(-50%, -100%)'
+  el.style.transform = transform
+  el.innerHTML = html
   el.addEventListener('click', e => { e.stopPropagation(); onClick() })
   el.addEventListener('wheel', e => { e.preventDefault(); onWheel(e) }, { passive: false })
   return el
 }
 
-// Circular cluster badge with count
+// SVG map-pin teardrop, anchored at its bottom tip to the lat/lng point
+function buildPinEl(color, pxWidth, label, onClick, onWheel) {
+  const h = Math.round(pxWidth * 1.45)
+  return buildMarkerEl({
+    title: label,
+    transform: 'translate(-50%, -100%)',
+    onClick, onWheel,
+    html: `
+      <svg width="${pxWidth}" height="${h}" viewBox="0 0 40 58"
+           style="display:block; filter:drop-shadow(0 2px 5px rgba(0,0,0,0.35));">
+        <path d="M20 0C9 0 0 9 0 20C0 35 20 58 20 58C20 58 40 35 40 20C40 9 31 0 20 0Z"
+              fill="${color}"/>
+        <circle cx="20" cy="20" r="8" fill="rgba(255,255,255,0.7)"/>
+      </svg>`
+  })
+}
+
+// Circular cluster badge showing the contained-point count
 function buildClusterEl(count, color, pxBase, onClick, onWheel) {
   const s = Math.round(Math.min(pxBase * 1.9, pxBase + Math.log2(count) * pxBase * 0.28))
-  const el = document.createElement('div')
-  el.title = `${count} locations`
-  el.style.cssText = 'cursor:pointer; user-select:none; display:inline-block; pointer-events:auto;'
-  el.innerHTML = `
-    <div style="
-      width:${s}px; height:${s}px; border-radius:50%;
-      background:${color}; border:2.5px solid rgba(255,255,255,0.6);
-      display:flex; align-items:center; justify-content:center;
-      color:#fff; font-size:${Math.round(s * 0.36)}px;
-      font-family:system-ui,sans-serif; font-weight:600; letter-spacing:-0.02em;
-      box-shadow:0 2px 8px rgba(0,0,0,0.3);">${count}</div>`
-  el.style.transform = 'translate(-50%, -50%)'
-  el.addEventListener('click', e => { e.stopPropagation(); onClick() })
-  el.addEventListener('wheel', e => { e.preventDefault(); onWheel(e) }, { passive: false })
-  return el
+  return buildMarkerEl({
+    title: `${count} locations`,
+    transform: 'translate(-50%, -50%)',
+    onClick, onWheel,
+    html: `
+      <div style="
+        width:${s}px; height:${s}px; border-radius:50%;
+        background:${color}; border:2.5px solid rgba(255,255,255,0.6);
+        display:flex; align-items:center; justify-content:center;
+        color:#fff; font-size:${Math.round(s * 0.36)}px;
+        font-family:system-ui,sans-serif; font-weight:600; letter-spacing:-0.02em;
+        box-shadow:0 2px 8px rgba(0,0,0,0.3);">${count}</div>`
+  })
 }
 
-export default function Globe({ pins, activeLayers, onPinClick, settings }) {
+export default function Globe({ pins, activeLayers, onPinClick, settings, categoryColors }) {
   const globeRef = useRef()
   const [zoom, setZoom] = useState(1)
   const zoomRef = useRef(1)
+  // Tracks whether the globe has fired its first onZoom, meaning the camera has settled
+  // and getScreenCoords returns valid values. deOverlapIndividuals is skipped until then.
+  const globeReadyRef = useRef(false)
 
   // Stable ref so HTML element click handlers always call the current handler
   // without needing to recreate the DOM elements every render
   const onClickRef = useRef()
 
   const t = THEMES[settings.theme]
-  const { minAltitude, clusterRadius, pinSize } = settings
+  const { theme, minAltitude, clusterRadius, pinSize, splitPins } = settings
   const pxWidth = Math.round(pinSize * 28)
+
+  // Kick off background decoding of both themes' high-res textures immediately so that
+  // whichever theme the user switches to is already cached (or nearly so).
+  useEffect(() => {
+    Object.values(GLOBE_TEXTURES).forEach(url => getCachedBitmap(url))
+  }, [])
+
+  // Progressive texture loading: low-res URL is bound to globeImageUrl (fast first paint),
+  // then the pre-decoded high-res bitmap is swapped straight into the existing Three.js
+  // texture. Because the bitmap is cached, theme switches after the first load are instant.
+  useEffect(() => {
+    let cancelled = false
+    getCachedBitmap(GLOBE_TEXTURES[theme]).then(bitmap => {
+      if (cancelled) return
+      const material = globeRef.current && findGlobeMaterial(globeRef.current)
+      if (!material?.map) return  // low-res not ready yet; keep it
+      // Build a new texture — three.js allocates immutable GPU storage per texture, so
+      // we can't resize by mutating .image; we must replace the texture object entirely.
+      const oldMap = material.map
+      const texture = new oldMap.constructor(bitmap)
+      texture.colorSpace = oldMap.colorSpace
+      texture.wrapS = oldMap.wrapS
+      texture.wrapT = oldMap.wrapT
+      texture.minFilter = oldMap.minFilter
+      texture.magFilter = oldMap.magFilter
+      texture.anisotropy = oldMap.anisotropy
+      texture.needsUpdate = true
+      material.map = texture
+      material.needsUpdate = true
+      oldMap.dispose()
+    }).catch(() => { /* keep low-res on fetch/decode failure */ })
+    return () => { cancelled = true }
+  }, [theme])
   // clusterRadius is 1–100 density scale; maps to supercluster's zoom-0 pixel radius
   const clusterRadiusPx = clusterRadius * 0.5
 
@@ -83,72 +212,68 @@ export default function Globe({ pins, activeLayers, onPinClick, settings }) {
     globe.renderer().setPixelRatio(window.devicePixelRatio)
   }, [])
 
-
   useEffect(() => {
     const globe = globeRef.current
     if (!globe) return
-    globe.controls().minDistance = 100 * (1 + minAltitude)
+    const controls = globe.controls()
+    controls.minDistance = GLOBE_RADIUS * (1 + minAltitude)
+    // Cap how far the camera can pull back: 2× the default load distance.
+    controls.maxDistance = MAX_ZOOM_OUT_FACTOR * GLOBE_RADIUS * (1 + DEFAULT_ALT)
   }, [minAltitude])
 
-  const filteredPins = useMemo(() => {
-    const visible = pins.filter(p => activeLayers.has(p.category))
-
-    // TODO: pin overlap at min zoom — the spread formula and grouping precision need
-    // proper calibration. Current approach is a rough approximation; pins may still
-    // overlap or be spread too far depending on pinSize and minAltitude.
-    const PRECISION = 2  // 0.01° grid (~1.1 km) — catches GPS-indistinct locations
-    const SPREAD_DEG = 1.5 * pinSize * 0.042 * minAltitude
-    const groups = new Map()
-    for (const pin of visible) {
-      const key = `${pin.lat.toFixed(PRECISION)},${pin.lng.toFixed(PRECISION)}`
-      if (!groups.has(key)) groups.set(key, [])
-      groups.get(key).push(pin)
-    }
-
-    const result = []
-    for (const group of groups.values()) {
-      if (group.length === 1) {
-        result.push(group[0])
-      } else {
-        group.forEach((pin, i) => {
-          const angle = (2 * Math.PI * i) / group.length
-          result.push({ ...pin,
-            lat: pin.lat + SPREAD_DEG * Math.cos(angle),
-            lng: pin.lng + SPREAD_DEG * Math.sin(angle)
-          })
-        })
-      }
-    }
-    return result
-  }, [pins, activeLayers, minAltitude, pinSize])
+  // Cluster on the pins' true coordinates — overlap is resolved later in screen space
+  // (deOverlapIndividuals) rather than by pre-shifting coordinates.
+  const filteredPins = useMemo(
+    () => pins.filter(p => activeLayers.has(p.category)),
+    [pins, activeLayers]
+  )
 
   const supercluster = useMemo(() => {
     if (!filteredPins.length) return null
-    const sc = new Supercluster({ radius: clusterRadiusPx, maxZoom: MAX_ZOOM })
+    // When splitting is on we cap clustering at SPLIT_ZOOM so that, once the user zooms
+    // past it, getClusters returns raw individual points — co-located pins never separate
+    // by pixel distance, so this is the only way they can surface to be fanned apart.
+    const sc = new Supercluster({
+      radius: clusterRadiusPx,
+      maxZoom: splitPins ? SPLIT_ZOOM : MAX_ZOOM
+    })
     sc.load(filteredPins.map(pin => ({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [pin.lng, pin.lat] },
       properties: pin
     })))
     return sc
-  }, [filteredPins, clusterRadiusPx])
+  }, [filteredPins, clusterRadiusPx, splitPins])
 
   const pointsData = useMemo(() => {
     if (!supercluster) return []
-    return supercluster.getClusters([-180, -90, 180, 90], zoom).map(c => {
+    const clusters = []
+    const individuals = []
+    for (const c of supercluster.getClusters([-180, -90, 180, 90], zoom)) {
       const [lng, lat] = c.geometry.coordinates
-      const isCluster = !!c.properties?.cluster
-      return {
-        lat, lng, isCluster,
-        count: c.properties?.point_count ?? 1,
-        clusterId: c.properties?.cluster_id,
-        pin: isCluster ? null : c.properties,
-        label: isCluster
-          ? `${c.properties.point_count} locations`
-          : (c.properties?.label ?? '')
+      if (c.properties?.cluster) {
+        clusters.push({
+          lat, lng, isCluster: true,
+          count: c.properties.point_count,
+          clusterId: c.properties.cluster_id
+        })
+      } else {
+        individuals.push({
+          lat, lng, isCluster: false,
+          pin: c.properties,
+          label: c.properties?.label ?? ''
+        })
       }
-    })
-  }, [supercluster, zoom])
+    }
+    // Fan apart individual pins that collide on screen (e.g. near-identical GPS coords).
+    // Guard on globeReadyRef: before the first onZoom the camera hasn't settled, so
+    // getScreenCoords returns bad values without throwing, causing wrong pin positions.
+    const globe = globeRef.current
+    if (splitPins && globeReadyRef.current && globe && individuals.length > 1) {
+      deOverlapIndividuals(individuals, globe, pxWidth * FAN_SPACING)
+    }
+    return [...clusters, ...individuals]
+  }, [supercluster, zoom, pxWidth, splitPins])
 
   // Keep click handler current without recreating HTML elements
   onClickRef.current = useCallback((point) => {
@@ -167,6 +292,7 @@ export default function Globe({ pins, activeLayers, onPinClick, settings }) {
   }, [supercluster, onPinClick, minAltitude])
 
   const handleZoom = useCallback(({ altitude }) => {
+    globeReadyRef.current = true
     const z = altToZoom(altitude, minAltitude)
     if (z !== zoomRef.current) {
       zoomRef.current = z
@@ -192,13 +318,14 @@ export default function Globe({ pins, activeLayers, onPinClick, settings }) {
     if (point.isCluster) {
       return buildClusterEl(point.count, t.clusterColor, pxWidth, () => onClickRef.current(point), forwardWheel)
     }
-    return buildPinEl(t.pinColor, pxWidth, point.label, () => onClickRef.current(point), forwardWheel)
-  }, [t, pxWidth, forwardWheel])
+    const color = categoryColors?.get(point.pin?.category) ?? t.pinColor
+    return buildPinEl(color, pxWidth, point.label, () => onClickRef.current(point), forwardWheel)
+  }, [t, pxWidth, forwardWheel, categoryColors])
 
   return (
     <GlobeGL
       ref={globeRef}
-      globeImageUrl={GLOBE_TEXTURES[settings.theme]}
+      globeImageUrl={GLOBE_TEXTURES_LORES[theme]}
       backgroundColor="rgba(0,0,0,0)"
       atmosphereColor={t.atmosphereColor}
       atmosphereAltitude={0.12}
