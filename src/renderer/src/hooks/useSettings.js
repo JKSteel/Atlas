@@ -8,6 +8,8 @@ export const DEFAULT_SETTINGS = {
   minAltitude: 0.02,   // fraction of globe radius (0.01 – 0.5)
   clusterRadius: 40,   // cluster density 1–100
   splitPins: false,    // fan apart co-located pins when zoomed in close
+  cycleSort: 'date',   // sort order when cycling pins: 'date' | 'name'
+  cycleScope: 'category', // whether cycling stays within one category or spans all active: 'category' | 'all'
   dateFrom: null,      // ISO date string YYYY-MM-DD or null (no lower bound)
   dateTo: null         // ISO date string YYYY-MM-DD or null (no upper bound)
 }

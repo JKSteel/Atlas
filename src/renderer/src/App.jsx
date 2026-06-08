@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import Globe from './components/Globe'
 import MediaPanel from './components/MediaPanel'
 import LayerControls from './components/LayerControls'
@@ -10,7 +10,9 @@ export default function App() {
   const { settings, updateSetting, resetSettings } = useSettings()
   const [pins, setPins] = useState([])
   const [selectedPin, setSelectedPin] = useState(null)
+  const [closingPin, setClosingPin] = useState(null)
   const [activeLayers, setActiveLayers] = useState(new Set())
+  const globeFlyRef = useRef()
   const [settingsOpen, setSettingsOpen] = useState(false)
 
   const t = THEMES[settings.theme]
@@ -56,6 +58,31 @@ export default function App() {
     return map
   }, [categories, t])
 
+  // Sorted pins for prev/next cycling — either within the open pin's category or across
+  // all active layers, depending on the cycleScope setting.
+  const categoryPins = useMemo(() => {
+    const pin = selectedPin ?? closingPin
+    if (!pin) return []
+    const pool = settings.cycleScope === 'all'
+      ? pins.filter(p => activeLayers.has(p.category))
+      : pins.filter(p => p.category === pin.category)
+    return pool.sort((a, b) => {
+      if (settings.cycleSort === 'date') {
+        if (!a.date && !b.date) return 0
+        if (!a.date) return 1
+        if (!b.date) return -1
+        return a.date.localeCompare(b.date)
+      }
+      return (a.label ?? '').localeCompare(b.label ?? '', undefined, { sensitivity: 'base' })
+    })
+  }, [selectedPin?.id, closingPin?.id, pins, activeLayers, settings.cycleSort, settings.cycleScope])
+
+  const handleNavigate = (pin) => {
+    setSelectedPin(pin)
+    setClosingPin(null)
+    globeFlyRef.current?.(pin.lat, pin.lng)
+  }
+
   const toggleLayer = (category) => {
     setActiveLayers(prev => {
       const next = new Set(prev)
@@ -80,6 +107,7 @@ export default function App() {
           onPinClick={setSelectedPin}
           settings={settings}
           categoryColors={categoryColors}
+          flyToRef={globeFlyRef}
         />
       </div>
 
@@ -111,12 +139,19 @@ export default function App() {
         />
       )}
 
-      {selectedPin && (
+      {(selectedPin || closingPin) && (
         <MediaPanel
-          pin={selectedPin}
+          pin={selectedPin ?? closingPin}
+          isClosing={!selectedPin && !!closingPin}
+          categoryPins={categoryPins}
           settings={settings}
           categoryColors={categoryColors}
-          onClose={() => setSelectedPin(null)}
+          onNavigate={handleNavigate}
+          onClose={() => {
+            setClosingPin(selectedPin)
+            setSelectedPin(null)
+            setTimeout(() => setClosingPin(null), 380)
+          }}
         />
       )}
 

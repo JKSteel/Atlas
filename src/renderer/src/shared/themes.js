@@ -31,7 +31,7 @@ export const THEMES = {
 
     // Pin colours
     pinColor:     '#f0a830',
-    clusterColor: '#c87941',
+    clusterColor: '#6e8fad',  // cool steel-blue — distinct from the warm amber/orange palette
 
     // Per-category pin colours (assigned by category order). Vivid for the navy canvas.
     categoryPalette: ['#f0a830', '#e8745b', '#f2c14e', '#5fb0d8',
@@ -73,7 +73,7 @@ export const THEMES = {
 
     // Cartographic deep red pins (classic atlas)
     pinColor:     '#8b1a1a',
-    clusterColor: '#7a4f2d',
+    clusterColor: '#4a4540',  // dark charcoal — distinct from the earthy category palette
 
     // Per-category pin colours (assigned by category order). Muted earthy inks for paper.
     categoryPalette: ['#8b1a1a', '#7a4f2d', '#5a6e3a', '#3d5a6c',

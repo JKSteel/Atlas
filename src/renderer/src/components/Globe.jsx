@@ -39,7 +39,9 @@ function getCachedBitmap(url) {
     bitmapCache.set(url,
       fetch(url)
         .then(r => r.blob())
-        .then(blob => createImageBitmap(blob, { imageOrientation: 'from-image' }))
+        // flipY matches what Three.js TextureLoader does for HTMLImageElement sources;
+        // ImageBitmap bypasses that internal flip so we pre-flip at decode time instead.
+        .then(blob => createImageBitmap(blob, { imageOrientation: 'flipY' }))
     )
   }
   return bitmapCache.get(url)
@@ -146,7 +148,7 @@ function buildClusterEl(count, color, pxBase, onClick, onWheel) {
     html: `
       <div style="
         width:${s}px; height:${s}px; border-radius:50%;
-        background:${color}; border:2.5px solid rgba(255,255,255,0.6);
+        background:${color}; opacity:0.7; border:2.5px solid rgba(255,255,255,0.6);
         display:flex; align-items:center; justify-content:center;
         color:#fff; font-size:${Math.round(s * 0.36)}px;
         font-family:system-ui,sans-serif; font-weight:600; letter-spacing:-0.02em;
@@ -154,10 +156,16 @@ function buildClusterEl(count, color, pxBase, onClick, onWheel) {
   })
 }
 
-export default function Globe({ pins, activeLayers, onPinClick, settings, categoryColors }) {
+export default function Globe({ pins, activeLayers, onPinClick, settings, categoryColors, flyToRef }) {
   const globeRef = useRef()
+  const containerRef = useRef()
+  // Fixed at mount — never passed as a changing prop so globe.gl's TextureLoader
+  // only runs once and can't race-overwrite our hi-res swaps on theme changes.
+  const seedGlobeImageRef = useRef(GLOBE_TEXTURES_LORES[settings.theme])
   const [zoom, setZoom] = useState(1)
   const zoomRef = useRef(1)
+  const [dims, setDims] = useState({ width: window.innerWidth, height: window.innerHeight })
+  const [hiResLoaded, setHiResLoaded] = useState(false)
   // Tracks whether the globe has fired its first onZoom, meaning the camera has settled
   // and getScreenCoords returns valid values. deOverlapIndividuals is skipped until then.
   const globeReadyRef = useRef(false)
@@ -170,23 +178,25 @@ export default function Globe({ pins, activeLayers, onPinClick, settings, catego
   const { theme, minAltitude, clusterRadius, pinSize, splitPins } = settings
   const pxWidth = Math.round(pinSize * 28)
 
-  // Kick off background decoding of both themes' high-res textures immediately so that
-  // whichever theme the user switches to is already cached (or nearly so).
+  // Pre-fetch and decode all theme bitmaps in the background so switches are instant.
   useEffect(() => {
+    Object.values(GLOBE_TEXTURES_LORES).forEach(url => getCachedBitmap(url))
     Object.values(GLOBE_TEXTURES).forEach(url => getCachedBitmap(url))
   }, [])
 
-  // Progressive texture loading: low-res URL is bound to globeImageUrl (fast first paint),
-  // then the pre-decoded high-res bitmap is swapped straight into the existing Three.js
-  // texture. Because the bitmap is cached, theme switches after the first load are instant.
+  // Unified texture sequence: apply lo-res first (fast), then hi-res.
+  // We own all material updates — globe.gl's TextureLoader only runs once (seed URL on
+  // mount) and is never triggered again, so it cannot overwrite a hi-res swap.
   useEffect(() => {
+    setHiResLoaded(false)
     let cancelled = false
-    getCachedBitmap(GLOBE_TEXTURES[theme]).then(bitmap => {
-      if (cancelled) return
-      const material = globeRef.current && findGlobeMaterial(globeRef.current)
-      if (!material?.map) return  // low-res not ready yet; keep it
-      // Build a new texture — three.js allocates immutable GPU storage per texture, so
-      // we can't resize by mutating .image; we must replace the texture object entirely.
+
+    const applyBitmap = (bitmap) => {
+      const globe = globeRef.current
+      if (!globe) return false
+      const material = findGlobeMaterial(globe)
+      if (!material?.map) return false
+      // three.js allocates immutable GPU storage per texture; replace the object entirely.
       const oldMap = material.map
       const texture = new oldMap.constructor(bitmap)
       texture.colorSpace = oldMap.colorSpace
@@ -199,7 +209,31 @@ export default function Globe({ pins, activeLayers, onPinClick, settings, catego
       material.map = texture
       material.needsUpdate = true
       oldMap.dispose()
-    }).catch(() => { /* keep low-res on fetch/decode failure */ })
+      return true
+    }
+
+    // Retry until the material exists — on initial mount globe.gl may not have finished
+    // loading the seed globeImageUrl yet when this effect first fires.
+    const applyWhenReady = (bitmap, onDone, retries = 30) => {
+      if (cancelled) return
+      if (!applyBitmap(bitmap)) {
+        if (retries > 0) setTimeout(() => applyWhenReady(bitmap, onDone, retries - 1), 100)
+        return
+      }
+      onDone?.()
+    }
+
+    getCachedBitmap(GLOBE_TEXTURES_LORES[theme]).then(loBitmap => {
+      if (cancelled) return
+      applyWhenReady(loBitmap, () => {
+        if (cancelled) return
+        getCachedBitmap(GLOBE_TEXTURES[theme]).then(hiBitmap => {
+          if (cancelled) return
+          applyWhenReady(hiBitmap, () => { if (!cancelled) setHiResLoaded(true) })
+        }).catch(() => {})
+      })
+    }).catch(() => {})
+
     return () => { cancelled = true }
   }, [theme])
   // clusterRadius is 1–100 density scale; maps to supercluster's zoom-0 pixel radius
@@ -210,6 +244,29 @@ export default function Globe({ pins, activeLayers, onPinClick, settings, catego
     const globe = globeRef.current
     if (!globe) return
     globe.renderer().setPixelRatio(window.devicePixelRatio)
+  }, [])
+
+  // Expose a flyTo(lat, lng) function to the parent via ref, preserving current altitude
+  useEffect(() => {
+    if (!flyToRef) return
+    flyToRef.current = (lat, lng) => {
+      const globe = globeRef.current
+      if (!globe) return
+      const { altitude } = globe.pointOfView()
+      globe.pointOfView({ lat, lng, altitude }, 800)
+    }
+  }, [flyToRef])
+
+  // Keep the globe filling its container when the window is resized
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(entries => {
+      const { width, height } = entries[0].contentRect
+      setDims({ width, height })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
   }, [])
 
   useEffect(() => {
@@ -323,18 +380,32 @@ export default function Globe({ pins, activeLayers, onPinClick, settings, catego
   }, [t, pxWidth, forwardWheel, categoryColors])
 
   return (
-    <GlobeGL
-      ref={globeRef}
-      globeImageUrl={GLOBE_TEXTURES_LORES[theme]}
-      backgroundColor="rgba(0,0,0,0)"
-      atmosphereColor={t.atmosphereColor}
-      atmosphereAltitude={0.12}
-      htmlElementsData={pointsData}
-      htmlLat="lat"
-      htmlLng="lng"
-      htmlAltitude={0}
-      htmlElement={htmlElementFn}
-      onZoom={handleZoom}
-    />
+    <div ref={containerRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
+      <GlobeGL
+        ref={globeRef}
+        width={dims.width}
+        height={dims.height}
+        globeImageUrl={seedGlobeImageRef.current}
+        backgroundColor="rgba(0,0,0,0)"
+        atmosphereColor={t.atmosphereColor}
+        atmosphereAltitude={0.12}
+        htmlElementsData={pointsData}
+        htmlLat="lat"
+        htmlLng="lng"
+        htmlAltitude={0}
+        htmlElement={htmlElementFn}
+        onZoom={handleZoom}
+      />
+      {!hiResLoaded && (
+        <div style={{
+          position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)',
+          color: t.textDim, fontSize: 9, letterSpacing: '0.25em', textTransform: 'uppercase',
+          fontFamily: 'system-ui, sans-serif', pointerEvents: 'none',
+          animation: 'atlas-overlay-in 1s ease-out both'
+        }}>
+          Loading high-res textures
+        </div>
+      )}
+    </div>
   )
 }
