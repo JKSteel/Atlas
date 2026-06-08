@@ -1,6 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from 'react'
 import { THEMES } from '../shared/themes'
-import COUNTRY_NAMES from '../shared/countries'
 
 // ── Icons ────────────────────────────────────────────────────────────────────
 
@@ -63,8 +62,8 @@ export default function MediaPanel({ pin, isClosing, categoryPins, settings, cat
   const videoRef = useRef()
   const t = THEMES[settings.theme]
   const categoryColor = categoryColors?.get(pin?.category) ?? t.accent
-  const isVideo = !!pin?.videoPath
-  const photoSrc = !isVideo && pin?.photos?.length ? `atlas://${pin.photos[0]}` : null
+  const isVideo = pin?.mediaPath ? /\.(mp4|mov|avi|mkv|m4v)$/i.test(pin.mediaPath) : false
+  const photoSrc = !isVideo && pin?.mediaPath ? `atlas://${pin.mediaPath}` : null
 
   const [muted, setMuted] = useState(settings.startMuted)
   const [progress, setProgress] = useState(0)
@@ -89,7 +88,7 @@ export default function MediaPanel({ pin, isClosing, categoryPins, settings, cat
     video.addEventListener('loadedmetadata', playWhenReady, { once: true })
     video.load()
     return () => video.removeEventListener('loadedmetadata', playWhenReady)
-  }, [pin?.videoPath, settings.startMuted])
+  }, [pin?.mediaPath, settings.startMuted])
 
   // Progress bar
   useEffect(() => {
@@ -100,7 +99,7 @@ export default function MediaPanel({ pin, isClosing, categoryPins, settings, cat
     video.addEventListener('timeupdate', onTimeUpdate)
     video.addEventListener('ended', onEnded)
     return () => { video.removeEventListener('timeupdate', onTimeUpdate); video.removeEventListener('ended', onEnded) }
-  }, [pin?.videoPath])
+  }, [pin?.mediaPath])
 
   const handleEnded = useCallback(() => {
     const video = videoRef.current
@@ -202,8 +201,7 @@ export default function MediaPanel({ pin, isClosing, categoryPins, settings, cat
   }, [onClose])
 
   // Centre footer: "City, Country — 19th Jan 2026"
-  const countryName = pin?.country ? (COUNTRY_NAMES[pin.country] ?? pin.country) : null
-  const location = [pin?.city, countryName].filter(Boolean).join(', ')
+  const location = [pin?.city, pin?.country].filter(Boolean).join(', ')
   const datePart = formatDate(pin?.date)
   const footerDetail = [location, datePart].filter(Boolean).join(' — ')
 
@@ -235,7 +233,7 @@ export default function MediaPanel({ pin, isClosing, categoryPins, settings, cat
               {isVideo ? (
                 <video
                   ref={videoRef}
-                  src={`atlas://${pin.videoPath}`}
+                  src={`atlas://${pin.mediaPath}`}
                   style={styles.media}
                   onEnded={handleEnded}
                 />

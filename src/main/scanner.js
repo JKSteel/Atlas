@@ -1,6 +1,7 @@
 import { exiftool } from 'exiftool-vendored'
 import { readdirSync, statSync, writeFileSync, existsSync, mkdirSync, readFileSync } from 'fs'
 import { join, extname, basename } from 'path'
+import COUNTRY_NAMES from '../renderer/src/shared/countries.js'
 
 const MEDIA_DIR = join(process.cwd(), 'media')
 const PINS_PATH = join(process.cwd(), 'data', 'pins.json')
@@ -47,9 +48,9 @@ function nearestCity(cities, lat, lng) {
     const d = dlat * dlat + dlng * dlng
     if (d < bestDist) { bestDist = d; bestIdx = i }
   }
-  return bestIdx >= 0
-    ? { city: names[bestIdx], country: countries[bestIdx] }
-    : { city: null, country: null }
+  if (bestIdx < 0) return { city: null, country: null }
+  const code = countries[bestIdx]
+  return { city: names[bestIdx], country: COUNTRY_NAMES[code] ?? code }
 }
 
 function fileInDateRange(tags, dateFrom, dateTo) {
@@ -128,8 +129,7 @@ export async function scanMedia(onProgress, dateFrom, dateTo) {
           date,
           city,
           country,
-          videoPath: isVideo ? `media/${category}/${file}` : null,
-          photos: isPhoto ? [`media/${category}/${file}`] : []
+          mediaPath: `media/${category}/${file}`,
         })
         console.log(`  ${file} → (${lat.toFixed(4)}, ${lng.toFixed(4)}) — ${city ?? '?'}, ${country ?? '?'}`)
       }

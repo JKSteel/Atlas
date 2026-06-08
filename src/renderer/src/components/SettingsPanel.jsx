@@ -105,7 +105,7 @@ export default function SettingsPanel({ settings, updateSetting, resetSettings, 
         <Row label="Theme" t={t}>
           <div style={{ display: 'flex', borderRadius: 4, overflow: 'hidden',
                         border: `1px solid ${t.inputBorder}` }}>
-            {['dark', 'light'].map(opt => (
+            {['light', 'dark'].map(opt => (
               <button
                 key={opt}
                 onClick={() => updateSetting('theme', opt)}
@@ -122,6 +122,42 @@ export default function SettingsPanel({ settings, updateSetting, resetSettings, 
           </div>
         </Row>
 
+        <Row label="Cycle media by" t={t}>
+          <div style={{ display: 'flex', borderRadius: 4, overflow: 'hidden',
+                        border: `1px solid ${t.inputBorder}` }}>
+            {['date', 'name'].map(opt => (
+              <button key={opt} onClick={() => updateSetting('cycleSort', opt)}
+                style={{
+                  padding: '4px 12px', border: 'none', cursor: 'pointer',
+                  fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase',
+                  fontFamily: 'system-ui, sans-serif',
+                  background: settings.cycleSort === opt ? t.accent : t.inputBg,
+                  color: settings.cycleSort === opt ? '#fff' : t.textDim,
+                  transition: 'background 0.15s, color 0.15s'
+                }}
+              >{opt}</button>
+            ))}
+          </div>
+        </Row>
+
+        <Row label="Cycle scope" t={t}>
+          <div style={{ display: 'flex', borderRadius: 4, overflow: 'hidden',
+                        border: `1px solid ${t.inputBorder}` }}>
+            {['category', 'all'].map(opt => (
+              <button key={opt} onClick={() => updateSetting('cycleScope', opt)}
+                style={{
+                  padding: '4px 12px', border: 'none', cursor: 'pointer',
+                  fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase',
+                  fontFamily: 'system-ui, sans-serif',
+                  background: settings.cycleScope === opt ? t.accent : t.inputBg,
+                  color: settings.cycleScope === opt ? '#fff' : t.textDim,
+                  transition: 'background 0.15s, color 0.15s'
+                }}
+              >{opt}</button>
+            ))}
+          </div>
+        </Row>
+
         {/* Advanced toggle */}
         <button
           onClick={() => setShowAdvanced(v => !v)}
@@ -130,7 +166,8 @@ export default function SettingsPanel({ settings, updateSetting, resetSettings, 
           <span style={{ letterSpacing: '0.2em' }}>ADVANCED</span>
           <span style={{ transition: 'transform 0.2s',
                          display: 'inline-block',
-                         transform: showAdvanced ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+                         transform: showAdvanced ? 'rotate(180deg)' : 'rotate(0deg)',
+                         fontSize: 30 }}>
             ▾
           </span>
         </button>
@@ -197,42 +234,6 @@ export default function SettingsPanel({ settings, updateSetting, resetSettings, 
                 onChange={v => updateSetting('splitPins', v)}
                 t={t}
               />
-            </Row>
-
-            <Row label="Cycle media by" t={t}>
-              <div style={{ display: 'flex', borderRadius: 4, overflow: 'hidden',
-                            border: `1px solid ${t.inputBorder}` }}>
-                {['date', 'name'].map(opt => (
-                  <button key={opt} onClick={() => updateSetting('cycleSort', opt)}
-                    style={{
-                      padding: '4px 12px', border: 'none', cursor: 'pointer',
-                      fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase',
-                      fontFamily: 'system-ui, sans-serif',
-                      background: settings.cycleSort === opt ? t.accent : t.inputBg,
-                      color: settings.cycleSort === opt ? '#fff' : t.textDim,
-                      transition: 'background 0.15s, color 0.15s'
-                    }}
-                  >{opt}</button>
-                ))}
-              </div>
-            </Row>
-
-            <Row label="Cycle scope" t={t}>
-              <div style={{ display: 'flex', borderRadius: 4, overflow: 'hidden',
-                            border: `1px solid ${t.inputBorder}` }}>
-                {['category', 'all'].map(opt => (
-                  <button key={opt} onClick={() => updateSetting('cycleScope', opt)}
-                    style={{
-                      padding: '4px 12px', border: 'none', cursor: 'pointer',
-                      fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase',
-                      fontFamily: 'system-ui, sans-serif',
-                      background: settings.cycleScope === opt ? t.accent : t.inputBg,
-                      color: settings.cycleScope === opt ? '#fff' : t.textDim,
-                      transition: 'background 0.15s, color 0.15s'
-                    }}
-                  >{opt}</button>
-                ))}
-              </div>
             </Row>
 
             <SliderSetting
